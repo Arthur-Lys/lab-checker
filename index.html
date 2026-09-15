@@ -106,6 +106,7 @@ function checkName(raw) {
 const KEY = "lab-checker-form", RKEY = "lab-checker-results";
 const load = (k) => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const Step = ({n, state, children}) => <div className={`step ${state || ""}`}><div className="num">{n}</div><div>{children}</div></div>;
 const post = (body) => fetch("/api/submit", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
 
 function App() {
@@ -176,7 +177,6 @@ function App() {
     const status = (row.text.match(/Статус звіту:\s*(\S+)/) || [])[1] || (row.text.match(/\w+Error/) || [""])[0] || (row.status ? `HTTP ${row.status}` : "мережа");
     return <span className={admitted ? "ok-t" : "bad-t"}>{admitted ? "ДОПУЩЕНО" : "НЕ ДОПУЩЕНО"} · {status}</span>;
   };
-  const Step = ({n, state, children}) => <div className={`step ${state || ""}`}><div className="num">{n}</div><div>{children}</div></div>;
   const cls = (c) => c.level === "bad" ? "bad" : c.level === "ok" ? "ok" : "";
 
   return <div>
