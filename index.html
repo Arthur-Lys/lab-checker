@@ -133,11 +133,12 @@ function App() {
     const id = ++nameReq.current;
     const timer = setTimeout(async () => {
       try {
-        const d = await post({student_name: payload.student_name, course: form.course, group: form.group, lab: "Lab_01", repository: "x/x"});
+        const d = await post({student_name: payload.student_name, course: form.course, group: form.group, lab: "Lab_01", repository: "nobody-000/does-not-exist-000"});
         if (id !== nameReq.current) return;
+        // the server checks the name before it touches the repo, so any answer past that point means the name exists
         if (/Студента не знайдено/.test(d.text)) setNameApi({state: "bad"});
-        else if (/Не вдалося клонувати|could not read Username/.test(d.text)) setNameApi({state: "ok"});
-        else setNameApi({state: "error"});
+        else if (d.status === 0 || d.status === 502 || d.status === 503 || d.status === 504 || /^Error:/.test(d.text)) setNameApi({state: "error"});
+        else setNameApi({state: "ok"});
       } catch { if (id === nameReq.current) setNameApi({state: "error"}); }
     }, 500);
     return () => clearTimeout(timer);
