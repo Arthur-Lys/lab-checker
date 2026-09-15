@@ -5,27 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lab checker</title>
 <style>
-body{font:14px/1.45 system-ui,sans-serif;margin:0;padding:20px 16px;background:#f6f7f9;color:#1c1e21}
-main{max-width:960px;margin:0 auto}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:#6b7280;margin:0 0 16px}
-.card{background:#fff;border:1px solid #dde1e6;border-radius:8px;padding:16px;margin-bottom:16px}
-label{display:block;font-weight:600;margin:8px 0 4px}
-input,select{width:100%;box-sizing:border-box;padding:8px;border:1px solid #c9ced6;border-radius:6px;font:inherit;background:#fff}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
-@media (max-width:600px){.row{grid-template-columns:1fr}}
-.labs{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
-.labs label{font-weight:400;margin:0;display:flex;gap:4px;align-items:center}
-button{padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;font:inherit;cursor:pointer}
-button.ghost{background:#e5e7eb;color:#111;padding:4px 10px}
+body{font:15px/1.45 system-ui,sans-serif;margin:0;padding:24px 16px;background:#f6f7f9;color:#1c1e21}
+main{max-width:760px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:#6b7280;margin:0 0 20px}
+.step{background:#fff;border:1px solid #dde1e6;border-radius:10px;padding:14px 16px 12px;margin-bottom:12px;display:grid;grid-template-columns:32px 1fr;gap:12px}
+.num{width:28px;height:28px;border-radius:50%;background:#e5e7eb;color:#374151;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.step.ok .num{background:#dcfce7;color:#15803d}.step.bad .num{background:#fee2e2;color:#b91c1c}
+.step label{display:block;font-weight:600;margin:2px 0 6px}
+input,select{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #c9ced6;border-radius:6px;font:inherit;background:#fff}
+input.bad{border-color:#ef4444}input.ok{border-color:#22c55e}
+.hint{font-size:13px;margin:6px 0 0;min-height:1.2em}
+.hint.bad{color:#b91c1c}.hint.ok{color:#15803d}.hint.warn{color:#b45309}.hint.muted{color:#6b7280}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.grid{grid-template-columns:1fr}}
+.labs{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 4px}
+.labs label{font-weight:400;margin:0;display:flex;gap:4px;align-items:center;padding:4px 8px;border:1px solid #dde1e6;border-radius:6px;background:#fafafa}
+button{padding:10px 16px;border:0;border-radius:6px;background:#2563eb;color:#fff;font:inherit;cursor:pointer}
+button.ghost{background:#e5e7eb;color:#111;padding:4px 10px;font-size:13px}
 button:disabled{opacity:.5;cursor:default}
+.send{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.preview{font-size:13px;color:#6b7280;font-family:ui-monospace,Consolas,monospace}
 table{width:100%;border-collapse:collapse}
-td,th{text-align:left;padding:8px;border-bottom:1px solid #eee;vertical-align:top}
-.ok{color:#15803d;font-weight:600}.bad{color:#b91c1c;font-weight:600}.wait{color:#6b7280}
+td,th{text-align:left;padding:8px 6px;border-bottom:1px solid #eee;vertical-align:top}
+.ok-t{color:#15803d;font-weight:600}.bad-t{color:#b91c1c;font-weight:600}.wait{color:#6b7280}
 .why{margin:4px 0;color:#374151;max-width:70ch}
 pre{white-space:pre-wrap;margin:6px 0 0;font-size:12px;color:#374151}
 details summary{cursor:pointer;color:#2563eb;font-size:13px}
-.note{font-size:13px;color:#6b7280}
+.results{background:#fff;border:1px solid #dde1e6;border-radius:10px;padding:14px 16px;margin-top:16px}
+.results h2{font-size:15px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center}
 </style>
 </head>
 <body>
@@ -42,52 +50,111 @@ const COURSES = {
 };
 const labsOf = (course) => Array.from({length: COURSES[course].labs}, (_, i) => `Lab_${String(i + 1).padStart(2, "0")}`);
 
-// every answer the checker has been seen to give, and what it actually means
+// ---------- what the checker answers, and what it means. Order matters: first match wins.
 const EXPLAIN = [
-  [/Не вдалося клонувати/, "Сервер не зміг зробити git clone. Причини: помилка в назві (формат рівно user/repo, без https://), репозиторій приватний або не існує. «could not read Username» = GitHub відповів 404 і git спробував спитати пароль."],
-  [/не знайдено каталог Lab_/, "У корені репозиторію нема каталогу з такою назвою. Треба Lab_01, Lab_02 … саме так, з нулем і підкресленням, у корені, а не в підкаталозі."],
+  [/^Error: timed out|timed out/i, "Перевірка тривала довше 55 с і наш проксі здався. Сервер викладача, мабуть, прокидається (безкоштовний Render засинає) або клонує великий репозиторій. Спробуй ще раз через хвилину."],
+  [/^Error:/, "Наш проксі взагалі не додзвонився до сервера перевірки. Або він лежить, або прокидається — повтори за хвилину."],
+  [/Bad Gateway|Service Unavailable|Gateway Time-out|Application failed to respond/i, "Сервер викладача не відповів (Render). Не твоя помилка — повтори за хвилину-дві."],
+  [/could not read Username/, "GitHub відповів 404, і git спробував спитати пароль. Тобто репозиторія з такою назвою нема або він приватний. Перевір назву по літерах і що репозиторій public."],
+  [/Repository not found/i, "GitHub каже, що такого репозиторія нема. Помилка в назві або він приватний."],
+  [/Не вдалося клонувати/, "Сервер не зміг зробити git clone. Формат рівно user/repo (без https://), репозиторій має бути public і існувати."],
+  [/не знайдено каталог Lab_/, "У корені репозиторію нема каталогу з такою назвою. Треба Lab_01, Lab_02 … саме так — з нулем і підкресленням, у корені, не в підкаталозі, не у гілці, яка не main."],
   [/REPORT_NOT_FOUND/, "У каталозі лабораторної нема файлу звіту. Сервер шукає pdf або docx, у назві якого є «report», «zvit» або «звіт» (наприклад Lab_01_report.pdf). Кирилиця в назві працює гірше — краще ASCII."],
-  [/декілька можливих звітів/, "Файлів, схожих на звіт, більше одного. Має лишитися рівно один pdf або docx з «report» у назві."],
-  [/CONTENT_VARIANT_MISMATCH/, "Сервер каже, що зміст не відповідає варіанту. Станом на 15.09.2026 ця перевірка відхиляє все: власний текст завдання викладача, pdf і docx, різні варіанти. Це помилка на сервері — з твого боку виправити нічого не можна, писати викладачу."],
-  [/VARIANT_MISMATCH/, "Номер варіанта у звіті (сервер читає «Варіант №N» з тексту) не збігається з варіантом, який у таблиці викладача закріплено за цим студентом. Або виправ номер, або ти не той студент."],
-  [/не належить курсу/, "Групу написано не так, як у списку сервера. Копіюй точно з переліку в повідомленні (наприклад ФеП-31, з маленькою «е»)."],
+  [/декілька можливих звітів/, "Файлів, схожих на звіт, більше одного. Має лишитися рівно один pdf або docx з «report» у назві. Прибери копії, ~$-тимчасові файли Word тощо."],
+  [/VARIANT_NOT_FOUND|не (вдалося )?(знайти|визначити) (номер )?варіант/i, "У тексті звіту сервер не знайшов «Варіант №N». Постав на титулці рядок виду «Варіант №1» (саме зі знаком №)."],
+  [/CONTENT_VARIANT_MISMATCH/, "Сервер вважає, що зміст не відповідає варіанту. Станом на 15.09.2026 ця перевірка відхиляє все: власний текст завдання викладача, pdf і docx, різні варіанти. Це помилка на сервері — з твого боку виправити нічого, писати викладачу."],
+  [/VARIANT_MISMATCH/, "Номер варіанта у звіті (сервер читає «Варіант №N» з тексту) не збігається з варіантом, закріпленим за цим студентом у таблиці викладача. Дивись рядки «Призначений варіант» і «Варіант у звіті» нижче."],
+  [/REPORT_(READ|PARSE)_ERROR|не вдалося прочитати звіт|Не вдалося (відкрити|розпарсити)/i, "Сервер не зміг прочитати файл звіту. Пошкоджений або захищений паролем pdf, docx збережений як «Word 97», або файл насправді іншого формату під не тим розширенням. Перезбережи як звичайний pdf."],
+  [/Помилка під час перевірки звіту/, "Сервер упав, читаючи звіт. Найчастіше — pdf/docx, який не відкривається бібліотекою, або нестандартні символи у назві файлу. Перезбережи файл і назви його Lab_NN_report.pdf."],
+  [/не належить курсу/, "Групу написано не так, як у списку сервера. Тут вона береться зі списку, тож якщо це бачиш — список на сервері змінили; напиши нам."],
+  [/(Студент|студента).*(не знайдено|не знайдений|відсутн)|не знайдено (студента|в списку)/i, "Сервер не знайшов такого студента у списку групи. Потрібно точно як у викладача: «Прізвище Ім'я», кирилицею, без по батькові, з правильними апострофами та дефісами."],
   [/Rules for course .* were not found/, "На сервері нема модуля правил для цієї лабораторної (rules.<курс>.labNN). Її ще ніхто не може перевірити, поки викладач не додасть правила. Це не про твій код."],
+  [/ModuleNotFoundError|ImportError/, "Серверу бракує власного модуля або бібліотеки — внутрішня помилка розгортання, не твоя."],
+  [/KeyError/, "Сервер шукав ключ, якого нема у своїх же даних (таблиця студентів чи варіантів). Найімовірніше, цієї групи або студента нема у його конфігурації."],
   [/^До захисту ДОПУЩЕНО/m, "Звіт пройшов. Далі на сайті стартує тест із 50 випадкових питань — його треба проходити на сайті викладача, ця сторінка сесію тесту не переносить."],
+  [/ValueError/, "Сервер відхилив дані форми (ValueError). Текст після двокрапки — його пояснення: зазвичай назва групи, курсу або лабораторної не з його списку."],
+  [/RuntimeError/, "Внутрішня помилка сервера під час перевірки (RuntimeError). Текст після двокрапки каже, на чому саме."],
+  [/Помилка під час перевірки коду/, "Сервер упав, перевіряючи код репозиторію. Читай текст винятку нижче — часто це просто відсутні правила для лабораторної."],
   [/Помилка під час/, "Необроблений виняток на сервері (HTTP 500). Текст після назви винятку — це його внутрішня помилка, а не оцінка твоєї роботи."],
-  [/^Error:/, "Наш проксі не додзвонився до сервера перевірки (він на безкоштовному Render і засинає — спробуй ще раз за хвилину)."],
+  [/404|Not Found/i, "Адреса перевірки не відповіла (404). Викладач міг перенести сайт — напиши нам, оновимо."],
 ];
-const explain = (text) => (EXPLAIN.find(([re]) => re.test(text)) || [null, "Невідома відповідь — читай повний текст нижче."])[1];
+const explain = (text, status) => {
+  const hit = EXPLAIN.find(([re]) => re.test(text));
+  if (hit) return hit[1];
+  if (status >= 500) return "Сервер відповів помилкою " + status + " без зрозумілого тексту. Не твоя вина — повтори пізніше.";
+  return "Невідома відповідь — читай повний текст нижче і напиши нам, додамо пояснення.";
+};
 
-const KEY = "lab-checker-form";
-const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } })();
+// ---------- live checks before anything is sent
+function normalizeRepo(raw) {
+  let s = raw.trim()
+    .replace(/^(https?:\/\/)?(www\.)?github\.com[\/:]/i, "")
+    .replace(/^git@github\.com:/i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const parts = s.split("/").filter(Boolean);
+  if (parts.length > 2) s = parts.slice(0, 2).join("/");   // user/repo/tree/main/... -> user/repo
+  return s;
+}
+function checkRepo(raw) {
+  if (!raw.trim()) return {level: "muted", text: "Формат user/repo, наприклад student-name/lab-works"};
+  const norm = normalizeRepo(raw);
+  if (/\s/.test(norm)) return {level: "bad", text: "У назві є пробіл — так не буває на GitHub"};
+  if (!norm.includes("/")) return {level: "bad", text: "Нема слеша: потрібно і власника, і назву — user/repo"};
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(norm)) return {level: "bad", text: "Дозволені лише латиниця, цифри, крапка, дефіс і підкреслення"};
+  if (norm !== raw.trim()) return {level: "ok", text: `Буде відправлено як ${norm}`, fixed: norm};
+  return {level: "ok", text: "Схоже на правильну назву. Має бути public і в корені мати Lab_01…"};
+}
+function checkName(raw) {
+  const s = raw.trim().replace(/\s+/g, " ");
+  if (!s) return {level: "muted", text: "Як у списку викладача: Прізвище Ім'я"};
+  if (/[A-Za-z]/.test(s)) return {level: "bad", text: "Латинські літери — сервер шукає у списку кирилицею"};
+  if (/\d/.test(s)) return {level: "bad", text: "Цифри у прізвищі? Це поле — тільки ім'я, група окремо"};
+  const words = s.split(" ");
+  if (words.length < 2) return {level: "bad", text: "Потрібні і прізвище, і ім'я — одного слова сервер не знайде"};
+  if (words.length > 2) return {level: "warn", text: "Три слова: у списку зазвичай без по батькові — якщо не знайде, прибери його"};
+  if (/[`´’‘]/.test(s)) return {level: "warn", text: "Апостроф краще звичайний ('), у списку викладача саме такий"};
+  return {level: "ok", text: "Прізвище Ім'я — так і має бути"};
+}
+
+const KEY = "lab-checker-form", RKEY = "lab-checker-results";
+const load = (k) => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
 function App() {
   const [form, setForm] = useState({student_name: "", course: "professional_python", group: "ФеП-31",
-                                    repository: "", labs: ["Lab_01"], ...saved});
-  const [rows, setRows] = useState({});
+                                    repository: "", labs: ["Lab_01"], ...(load(KEY) || {})});
+  const [results, setResults] = useState(load(RKEY) || {rows: {}, at: null});
   const [running, setRunning] = useState(false);
   const labs = labsOf(form.course);
-  useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(form)); } catch {} }, [form]);
+  const rows = results.rows;
+  useEffect(() => save(KEY, form), [form]);
+  useEffect(() => save(RKEY, results), [results]);
+
+  const nameCheck = checkName(form.student_name);
+  const repoCheck = checkRepo(form.repository);
+  const labsOk = form.labs.length > 0;
+  const ready = nameCheck.level !== "bad" && nameCheck.level !== "muted" && repoCheck.level === "ok" && labsOk;
+  const payload = {...form, student_name: form.student_name.trim().replace(/\s+/g, " "), repository: normalizeRepo(form.repository)};
 
   const set = (k) => (e) => setForm({...form, [k]: e.target.value});
   const setCourse = (e) => {
     const course = e.target.value;
     setForm({...form, course, group: COURSES[course].groups[0], labs: form.labs.filter(l => labsOf(course).includes(l))});
-    setRows({});
   };
   const toggle = (lab) => setForm({...form, labs: form.labs.includes(lab) ? form.labs.filter(l => l !== lab) : [...form.labs, lab].sort()});
 
   async function submitOne(lab) {
-    setRows(r => ({...r, [lab]: {state: "wait"}}));
+    setResults(r => ({rows: {...r.rows, [lab]: {state: "wait"}}, at: new Date().toISOString()}));
     let data;
     try {
       const res = await fetch("/api/submit", {method: "POST", headers: {"content-type": "application/json"},
-                                              body: JSON.stringify({...form, lab})});
+                                              body: JSON.stringify({...payload, lab})});
       data = await res.json();
     } catch (error) {
       data = {status: 0, seconds: "", text: `Error: ${error.message}`};
     }
-    setRows(r => ({...r, [lab]: {state: "done", ...data}}));
+    setResults(r => ({rows: {...r.rows, [lab]: {state: "done", ...data}}, at: new Date().toISOString()}));
   }
   async function submitAll() {
     setRunning(true);
@@ -97,36 +164,65 @@ function App() {
   const verdict = (row) => {
     if (row.state === "wait") return <span className="wait">перевіряю…</span>;
     const admitted = /ДОПУЩЕНО/.test(row.text) && !/НЕ ДОПУЩЕНО/.test(row.text);
-    const status = (row.text.match(/Статус звіту:\s*(\S+)/) || [])[1] || (row.text.match(/\w+Error:/) || [""])[0];
-    return <span className={admitted ? "ok" : "bad"}>{admitted ? "ДОПУЩЕНО" : "НЕ ДОПУЩЕНО"} {status}</span>;
+    const status = (row.text.match(/Статус звіту:\s*(\S+)/) || [])[1] || (row.text.match(/\w+Error/) || [""])[0] || (row.status ? `HTTP ${row.status}` : "мережа");
+    return <span className={admitted ? "ok-t" : "bad-t"}>{admitted ? "ДОПУЩЕНО" : "НЕ ДОПУЩЕНО"} · {status}</span>;
   };
-  const ready = form.student_name.trim() && /^[\w.-]+\/[\w.-]+$/.test(form.repository.trim()) && form.labs.length;
+  const Step = ({n, state, children}) => <div className={`step ${state || ""}`}><div className="num">{n}</div><div>{children}</div></div>;
+  const stateOf = (c) => c.level === "bad" ? "bad" : (c.level === "ok" || c.level === "warn") ? "ok" : "";
 
   return <div>
     <h1>Перевірка лабораторних</h1>
-    <p className="sub">Та сама перевірка, що на сайті викладача, але форма не скидається, лабораторні можна відправити пачкою, а кожна відповідь пояснюється.</p>
-    <div className="card">
-      <div className="row">
-        <div><label>Студент</label><input value={form.student_name} onChange={set("student_name")} placeholder="Прізвище Ім'я — як у списку викладача" /></div>
-        <div><label>GitHub repository</label><input value={form.repository} onChange={set("repository")} placeholder="user/repo" /></div>
+    <p className="sub">Та сама перевірка, що на сайті викладача: форма не скидається, лабораторні йдуть пачкою, кожна відповідь пояснюється.</p>
+
+    <Step n="1" state={stateOf(nameCheck)}>
+      <label>Студент</label>
+      <input className={nameCheck.level === "bad" ? "bad" : nameCheck.level === "ok" ? "ok" : ""} value={form.student_name} onChange={set("student_name")} placeholder="Прізвище Ім'я" />
+      <p className={`hint ${nameCheck.level}`}>{nameCheck.text}</p>
+    </Step>
+
+    <Step n="2" state={stateOf(repoCheck)}>
+      <label>GitHub repository</label>
+      <input className={repoCheck.level === "bad" ? "bad" : repoCheck.level === "ok" ? "ok" : ""} value={form.repository} onChange={set("repository")}
+             onBlur={() => repoCheck.fixed && setForm({...form, repository: repoCheck.fixed})} placeholder="user/repo або посилання на GitHub" />
+      <p className={`hint ${repoCheck.level}`}>{repoCheck.text}</p>
+    </Step>
+
+    <Step n="3" state="ok">
+      <div className="grid">
         <div><label>Предмет</label><select value={form.course} onChange={setCourse}>
           {Object.entries(COURSES).map(([id, c]) => <option key={id} value={id}>{c.label}</option>)}</select></div>
         <div><label>Група</label><select value={form.group} onChange={set("group")}>
           {COURSES[form.course].groups.map(g => <option key={g}>{g}</option>)}</select></div>
       </div>
+      <p className="hint muted">Списки — рівно ті, що приймає сервер; вписати щось інше він не дасть.</p>
+    </Step>
+
+    <Step n="4" state={labsOk ? "ok" : "bad"}>
       <label>Лабораторні</label>
-      <div className="labs">{labs.map(l => <label key={l}><input type="checkbox" checked={form.labs.includes(l)} onChange={() => toggle(l)} />{l}</label>)}
-        <button className="ghost" onClick={() => setForm({...form, labs: [...labs]})}>всі</button>
-        <button className="ghost" onClick={() => setForm({...form, labs: []})}>жодної</button></div>
-      <button disabled={running || !ready} onClick={submitAll}>{running ? "Перевіряю…" : `Перевірити ${form.labs.length}`}</button>
-      <span className="note"> &nbsp; кожна перевірка 5–15 с: сервер клонує репозиторій щоразу</span>
-    </div>
-    {Object.keys(rows).length > 0 && <div className="card"><table><thead><tr><th>Lab</th><th>HTTP</th><th>с</th><th>Вердикт</th><th></th></tr></thead><tbody>
-      {labs.filter(l => rows[l]).map(l => { const r = rows[l]; return <tr key={l}>
-        <td>{l}</td><td>{r.status ?? ""}</td><td>{r.seconds ?? ""}</td>
-        <td>{verdict(r)}{r.text && <div className="why">{explain(r.text)}</div>}{r.text && <details><summary>повний текст відповіді</summary><pre>{r.text}</pre></details>}</td>
-        <td><button className="ghost" disabled={running} onClick={() => submitOne(l)}>↻</button></td></tr>; })}
-    </tbody></table></div>}
+      <div className="labs">{labs.map(l => <label key={l}><input type="checkbox" checked={form.labs.includes(l)} onChange={() => toggle(l)} />{l}</label>)}</div>
+      <button className="ghost" onClick={() => setForm({...form, labs: [...labs]})}>всі</button>{" "}
+      <button className="ghost" onClick={() => setForm({...form, labs: []})}>жодної</button>
+      <p className={`hint ${labsOk ? "muted" : "bad"}`}>{labsOk ? `Вибрано ${form.labs.length}, по 5–15 с кожна — сервер клонує репозиторій щоразу` : "Вибери хоча б одну"}</p>
+    </Step>
+
+    <Step n="5" state={ready ? "ok" : ""}>
+      <div className="send">
+        <button disabled={running || !ready} onClick={submitAll}>{running ? "Перевіряю…" : `Перевірити ${form.labs.length}`}</button>
+        <span className="preview">{payload.student_name || "…"} · {form.group} · {payload.repository || "…"}</span>
+      </div>
+      {!ready && <p className="hint muted">Кнопка ввімкнеться, коли кроки 1, 2 і 4 будуть зеленими.</p>}
+    </Step>
+
+    {Object.keys(rows).length > 0 && <div className="results">
+      <h2><span>Результати{results.at && <span className="preview"> · {new Date(results.at).toLocaleString("uk-UA")}</span>}</span>
+          <button className="ghost" disabled={running} onClick={() => setResults({rows: {}, at: null})}>очистити</button></h2>
+      <table><thead><tr><th>Lab</th><th>HTTP</th><th>с</th><th>Вердикт</th><th></th></tr></thead><tbody>
+        {labs.filter(l => rows[l]).map(l => { const r = rows[l]; return <tr key={l}>
+          <td>{l}</td><td>{r.status ?? ""}</td><td>{r.seconds ?? ""}</td>
+          <td>{verdict(r)}{r.text && <div className="why">{explain(r.text, r.status)}</div>}{r.text && <details><summary>повний текст відповіді</summary><pre>{r.text}</pre></details>}</td>
+          <td><button className="ghost" disabled={running} onClick={() => submitOne(l)}>↻</button></td></tr>; })}
+      </tbody></table>
+    </div>}
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
