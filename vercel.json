@@ -1,5 +1,6 @@
 {
   "functions": {
-    "api/submit.py": { "maxDuration": 60 }
+    "api/submit.py": { "maxDuration": 60 },
+    "api/quiz.py": { "maxDuration": 60 }
   }
 }
