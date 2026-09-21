@@ -65,6 +65,11 @@ details summary{cursor:pointer;color:#2563eb;font-size:13px}
 .opt.picked.wrong,.opt.picked.wrong:disabled{border-color:#dc2626;background:#fee2e2;animation:oops .3s cubic-bezier(.2,.8,.2,1)}
 .opt.picked.wrong .key{background:#dc2626;color:#fff}
 @keyframes oops{20%{transform:translateX(-5px)}50%{transform:translateX(5px)}80%{transform:translateX(-2px)}}
+.dev{border-color:#f59e0b}.devgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:4px 0 12px}
+.devgrid label{font-weight:400;display:flex;gap:8px;align-items:center;margin:0}.devgrid input{width:auto}
+code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:#f3f4f6;padding:1px 4px;border-radius:4px}
+.fx{position:fixed;inset:0;pointer-events:none;z-index:99}
+[data-anim=off] *{animation:none!important;transition:none!important}
 </style>
 </head>
 <body>
@@ -134,7 +139,7 @@ function checkName(raw) {
   return {level: "ok", text: ""};
 }
 
-const KEY = "lab-checker-form", RKEY = "lab-checker-results", SKEY = "lab-checker-secret";
+const KEY = "lab-checker-form", RKEY = "lab-checker-results";
 const load = (k) => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const Step = ({n, state, children}) => <div className={`step ${state || ""}`}><div className="num">{n}</div><div>{children}</div></div>;
@@ -159,8 +164,27 @@ function useKonami(handlers) {
   }, []);
 }
 
-const QKEY = "lab-checker-quizzes";
+const QKEY = "lab-checker-quizzes", DKEY = "lab-checker-dev", UKEY = "lab-checker-unknown";
 const quizPost = (body) => fetch("/api/quiz", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
+const copy = (text) => { try { navigator.clipboard.writeText(text); } catch {} };
+
+// a few bursts over the page, then the canvas is gone
+function fireworks(ms = 2600) {
+  const c = document.createElement("canvas"); c.className = "fx"; document.body.appendChild(c);
+  const ctx = c.getContext("2d"), W = c.width = innerWidth, H = c.height = innerHeight, ps = [], hues = [215, 265, 145, 35, 340];
+  const burst = (x, y) => { const h = hues[Math.floor(Math.random() * hues.length)];
+    for (let i = 0; i < 90; i++) { const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5; ps.push({x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, h: h + Math.random() * 30}); } };
+  const t0 = performance.now(); let next = 0;
+  const tick = (t) => {
+    const el = t - t0;
+    if (el > next && el < ms - 900) { burst(W * (0.2 + Math.random() * 0.6), H * (0.15 + Math.random() * 0.4)); next = el + 260 + Math.random() * 260; }
+    ctx.clearRect(0, 0, W, H);
+    for (const p of ps) { p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.vx *= 0.985; p.vy *= 0.985; p.life -= 0.014;
+      if (p.life > 0) { ctx.globalAlpha = p.life; ctx.fillStyle = `hsl(${p.h} 90% 60%)`; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, 7); ctx.fill(); } }
+    if (el < ms) requestAnimationFrame(tick); else c.remove();
+  };
+  requestAnimationFrame(tick);
+}
 
 // eased count-up for the result numbers
 function Count({to, max, ms = 900}) {
@@ -175,13 +199,14 @@ function Count({to, max, ms = 900}) {
 }
 
 // the teacher's quiz, driven through api/quiz.py. One click sends the answer; there is no way back on his side.
-// `answers` (question -> correct text) is only there while the code is on: it pre-lights the right option and
-// colours the click green / red; a question the key doesn't know gets green on faith.
-function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
+// `answers` (question -> correct text) colours a click green or red once it is sent; a question the key lacks goes
+// green on faith. The dev menu can pre-light the right option, autosolve, and show the raw replies.
+function Quiz({quiz, answers, dev, onChange, onRestart, onUnknown}) {
   const [phase, setPhase] = useState("in");     // in | out
   const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [last, setLast] = useState(null);
   const q = quiz.question;
   const known = answers && q ? answers[q.q] : null;
   const rightKey = known && q ? (q.opts.find(o => o.t === known) || {}).k : null;
@@ -192,15 +217,17 @@ function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
     let d;
     try { d = await quizPost({session: quiz.session, answer: k}); }
     catch (error) { d = {error: `Мережа: ${error.message}`}; }
+    setLast(d);
     if (d.expired) { onChange({...quiz, expired: true}); setBusy(false); return; }
     if (d.error) { setErr(d.error); setPicked(null); setBusy(false); return; }
-    const hold = rightKey && k !== rightKey ? 700 : 0;   // let a red one register before it slides away
+    if (d.done && dev.anim && d.result && d.result.test && d.result.test.got === d.result.test.max) fireworks();
+    const hold = dev.colors && rightKey && k !== rightKey ? (dev.auto ? Math.min(dev.speed, 400) : 700) : 0;   // let a red one register
     setTimeout(() => {
       setPhase("out");
       setTimeout(() => {
         onChange(d.done ? {...quiz, question: null, result: d.result} : {...quiz, question: d.question});
         setPicked(null); setPhase("in"); setBusy(false);
-      }, 180);
+      }, dev.anim ? 180 : 0);
     }, hold);
   }
   useEffect(() => {   // keys 1–4 answer too
@@ -212,16 +239,22 @@ function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+  useEffect(() => { if (q && answers && !known) onUnknown(q); }, [q && q.q, answers]);
+  useEffect(() => {   // autosolve: the key's answer, A when it has none
+    if (!dev.auto || !q || busy || !answers) return;
+    const t = setTimeout(() => answer(rightKey || "A"), dev.speed);
+    return () => clearTimeout(t);
+  }, [dev.auto, dev.speed, q && q.n, busy, answers]);
 
   const optClass = (o) => {
     const c = ["opt"];
-    if (answers && rightKey === o.k) c.push("right");
-    if (picked === o.k) { c.push("picked"); if (answers) c.push(rightKey ? (o.k === rightKey ? "right" : "wrong") : "good"); }
+    if (dev.hints && rightKey === o.k) c.push("right");
+    if (picked === o.k) { c.push("picked"); if (dev.colors && answers) c.push(rightKey ? (o.k === rightKey ? "right" : "wrong") : "good"); }
     return c.join(" ");
   };
-  const head = (extra) => <h2><span>Тест · {quiz.lab}{extra}{answers && <span className="preview"> · підказки</span>}</span>
-    <span>{answers && <button className="ghost" onClick={onHideAnswers}>сховати підказки</button>}{" "}
-      <button className="ghost" disabled={busy || quiz.restarting} onClick={onRestart}>заново</button></span></h2>;
+  const head = (extra) => <h2><span>Тест · {quiz.lab}{extra}{dev.hints && <span className="preview"> · підказки</span>}{dev.auto && q && <span className="preview"> · авто</span>}</span>
+    <button className="ghost" disabled={busy || quiz.restarting} onClick={onRestart}>заново</button></h2>;
+  const debug = dev.debug && last && <details open><summary>відповідь сервера</summary><pre>{JSON.stringify(last, null, 1)}</pre></details>;
 
   if (quiz.restarting) return <div className="results quiz">{head(null)}
     <p className="hint muted">перевіряю лабораторну ще раз і роздаю нові 50 питань…</p></div>;
@@ -230,7 +263,7 @@ function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
     <p className="hint bad">{quiz.error}</p><p className="hint muted">«Заново» спробує ще раз.</p></div>;
 
   if (quiz.expired) return <div className="results quiz">{head(null)}
-    <p className="hint bad">Сесія тесту на сервері закінчилась. «Заново» перевірить лабораторну ще раз і роздасть нові 50 питань.</p></div>;
+    <p className="hint bad">Сесія тесту на сервері закінчилась. «Заново» перевірить лабораторну ще раз і роздасть нові 50 питань.</p>{debug}</div>;
 
   if (quiz.result) {
     const r = quiz.result;
@@ -242,7 +275,7 @@ function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
           <div className="v">{n(k) ? <Count to={n(k).got} max={n(k).max} ms={700} /> : "—"}</div><div className="l">{l}</div></div>)}
       </div>
       <p className="grade">Бали за лабораторну: <b>{r.grade ?? "—"}</b>{r.status && <span className="preview"> · {r.status}</span>}</p>
-      <p className="hint muted">Результат записано на сервері викладача. Спроб необмежено — «заново» роздасть нові 50.</p></div>;
+      <p className="hint muted">Результат записано на сервері викладача. Спроб необмежено — «заново» роздасть нові 50.</p>{debug}</div>;
   }
 
   if (!q) return <div className="results quiz">{head(null)}<p className="hint muted">завантажую питання…</p></div>;
@@ -252,10 +285,37 @@ function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
     <div key={q.n} className={`qcard ${phase}`}>
       <p className="qtext">{q.q}</p>
       <div className="opts">{q.opts.map((o, i) => <button key={o.k} className={optClass(o)} disabled={busy} onClick={() => answer(o.k)}>
-        <span className="key">{answers && rightKey === o.k ? "✓" : i + 1}</span><span>{o.t}</span></button>)}</div>
+        <span className="key">{dev.hints && rightKey === o.k ? "✓" : i + 1}</span><span>{o.t}</span></button>)}</div>
     </div>
     {err && <p className="hint bad">{err}</p>}
-    <p className="hint muted">клік або клавіші 1–4 · відповідь іде одразу, назад дороги нема</p>
+    <p className="hint muted">клік або клавіші 1–4 · відповідь іде одразу, назад дороги нема</p>{debug}
+  </div>;
+}
+
+// the dev menu: unlocked once by the code, then a "dev" button by the title reopens it
+function DevMenu({dev, setDev, answers, unknown, setUnknown, quizzes, onClose}) {
+  const box = useRef(null);
+  useEffect(() => { box.current && box.current.scrollIntoView({behavior: "smooth", block: "nearest"}); }, []);
+  const flag = (k) => <label key={k}><input type="checkbox" checked={!!dev[k]} onChange={e => setDev(d => ({...d, [k]: e.target.checked}))} />{{
+    hints: "підсвічувати правильну (✓) до кліку", colors: "зелений / червоний після кліку", anim: "анімації", debug: "показувати відповідь сервера"}[k]}</label>;
+  const open = Object.values(quizzes).filter(z => z && z.question);
+  return <div className="results dev" ref={box}>
+    <h2><span>dev<span className="preview"> · ↑↑↓↓←→←→BA⏎</span></span><button className="ghost" onClick={onClose}>закрити</button></h2>
+    <div className="devgrid">{["hints", "colors", "anim", "debug"].map(flag)}</div>
+    <div className="send">
+      <button disabled={dev.auto || !open.length || !answers} onClick={() => setDev(d => ({...d, auto: true}))}>{dev.auto ? "розв'язую…" : "розв'язати автоматично"}</button>
+      <select value={dev.speed} onChange={e => setDev(d => ({...d, speed: +e.target.value}))} style={{width: "auto"}}>
+        <option value={0}>миттєво</option><option value={150}>швидко</option><option value={600}>дивитись</option></select>
+      {dev.auto && <button className="ghost" onClick={() => setDev(d => ({...d, auto: false}))}>стоп</button>}
+      <span className="preview">{open.length ? `${open.length} відкрит${open.length === 1 ? "ий" : "их"} тест${open.length === 1 ? "" : "и"}` : "спочатку пройди перевірку"}</span>
+    </div>
+    <p className="hint muted">ключ: {answers ? `${Object.keys(answers).length} питань` : "вантажиться…"} · невідомих зустрінуто: {unknown.length}{" "}
+      {unknown.length > 0 && <><button className="ghost" onClick={() => copy(JSON.stringify(unknown, null, 1))}>скопіювати</button>{" "}
+      <button className="ghost" onClick={() => setUnknown([])}>очистити</button></>}</p>
+    {unknown.length > 0 && <details><summary>невідомі питання</summary><pre>{unknown.map(u => `• ${u.q}\n    ${u.opts.join(" | ")}`).join("\n")}</pre></details>}
+    <p className="hint muted">сесії: {Object.values(quizzes).filter(z => z && z.session).map(z => <span key={z.lab}>{z.lab} <code>{z.session.slice(0, 10)}…</code>{" "}
+      <button className="ghost" onClick={() => copy(z.session)}>скопіювати</button> </span>)}{!Object.keys(quizzes).length && "нема"}</p>
+    <p><button className="ghost" onClick={() => { if (confirm("Стерти все локальне: форму, результати, тести, dev? Сесії на сервері лишаються.")) { localStorage.clear(); location.reload(); } }}>стерти все локальне</button></p>
   </div>;
 }
 const post = (body) => fetch("/api/submit", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
@@ -266,11 +326,16 @@ function App() {
   const [results, setResults] = useState(load(RKEY) || {rows: {}, at: null});
   const [running, setRunning] = useState(false);
   const [nameApi, setNameApi] = useState({state: "idle"});   // idle | checking | ok | bad | error
-  const [secret, setSecret] = useState(!!load(SKEY));
   const [quizzes, setQuizzes] = useState(load(QKEY) || {});          // one quiz per lab
-  const [answers, setAnswers] = useState(null);                        // question -> correct text, while the code is on
+  const [answers, setAnswers] = useState(null);                        // question -> correct text; {} if the file failed
+  const [dev, setDev] = useState({unlocked: false, open: false, hints: false, colors: true, anim: true, debug: false, speed: 150, ...(load(DKEY) || {}), auto: false});
+  const [unknown, setUnknown] = useState(load(UKEY) || []);           // questions the key does not have, to extend it
   useEffect(() => save(QKEY, quizzes), [quizzes]);
+  useEffect(() => save(DKEY, {...dev, auto: false}), [dev]);
+  useEffect(() => save(UKEY, unknown), [unknown]);
+  useEffect(() => { fetch("/answers.json").then(r => r.json()).then(d => setAnswers(Object.fromEntries(d.questions.map(x => [x.q, x.a])))).catch(() => setAnswers({})); }, []);
   const setQuiz = (lab, fn) => setQuizzes(m => ({...m, [lab]: typeof fn === "function" ? fn(m[lab] || {lab}) : fn}));
+  const noteUnknown = (q) => setUnknown(u => u.some(x => x.q === q.q) ? u : [...u, {q: q.q, opts: q.opts.map(o => o.t)}]);
   // a reload mid-quiz: the server's GET is idempotent, so pick every open quiz back up
   useEffect(() => {
     Object.values(load(QKEY) || {}).forEach(z => {
@@ -282,14 +347,13 @@ function App() {
       }).catch(() => {});
     });
   }, []);
-  useEffect(() => {
-    if (!secret || answers) return;
-    fetch("/answers.json").then(r => r.json()).then(d => setAnswers(Object.fromEntries(d.questions.map(x => [x.q, x.a])))).catch(() => {});
-  }, [secret]);
+  // autosolve switches itself off once nothing is left to answer
+  useEffect(() => { if (dev.auto && !Object.values(quizzes).some(z => z && z.question)) setDev(d => ({...d, auto: false})); }, [quizzes]);
+
   const page = useRef(null);
   const nudge = (key, step) => {
     const el = page.current;
-    if (!el || !el.animate) return;
+    if (!el || !el.animate || !dev.anim) return;
     const amp = 4 + step * 2;
     const move = (x, y) => [{transform: "translate(0,0)"}, {transform: `translate(${x}px,${y}px)`, offset: .35}, {transform: "translate(0,0)"}];
     const pulse = (k) => [{transform: "scale(1)"}, {transform: `scale(${k})`, offset: .4}, {transform: "scale(1)"}];
@@ -300,9 +364,9 @@ function App() {
       : [{transform: "translateX(0)"}, {transform: "translateX(-6px)", offset: .2}, {transform: "translateX(6px)", offset: .5}, {transform: "translateX(-3px)", offset: .8}, {transform: "translateX(0)"}];
     el.animate(frames, {duration: key === "Enter" ? 420 : 300, easing: "cubic-bezier(.2,.8,.2,1)"});
   };
+  // the code: first time unlocks the dev menu for good, after that it just opens it. Fireworks every time.
   useKonami({onStep: (step, k) => step >= 2 && nudge(k, step), onMiss: () => nudge("miss", 0),
-             onHit: () => { nudge("Enter", 11); setSecret(v => !v); }});
-  useEffect(() => save(SKEY, secret), [secret]);
+             onHit: () => { nudge("Enter", 11); if (dev.anim) fireworks(); setDev(d => ({...d, unlocked: true, open: true})); }});
   const nameReq = useRef(0);
   const labs = labsOf(form.course);
   const rows = results.rows;
@@ -370,9 +434,9 @@ function App() {
   };
   const cls = (c) => c.level === "bad" ? "bad" : c.level === "ok" ? "ok" : "";
 
-  return <div ref={page}>
+  return <div ref={page} data-anim={dev.anim ? "on" : "off"}>
     <h1>Перевірка лабораторних</h1>
-    <p className="sub">Той самий сервер перевірки, що на сайті викладача. Форма не скидається, лабораторні пачкою, відповіді пояснені.</p>
+    <p className="sub">Той самий сервер перевірки, що на сайті викладача. Форма не скидається, лабораторні пачкою, відповіді пояснені.{dev.unlocked && <> <button className="ghost" onClick={() => setDev(d => ({...d, open: !d.open}))}>dev</button></>}</p>
 
     <Step n="1" state={nameState}>
       <label>Студент</label>
@@ -422,13 +486,16 @@ function App() {
       </tbody></table>
     </div>}
 
-    {labs.filter(l => quizzes[l]).map(l => <Quiz key={l} quiz={quizzes[l]} answers={secret ? answers : null}
-      onChange={(z) => setQuiz(l, z)} onHideAnswers={() => setSecret(false)}
+    {labs.filter(l => quizzes[l]).map(l => <Quiz key={l} quiz={quizzes[l]} answers={answers} dev={dev} onUnknown={noteUnknown}
+      onChange={(z) => setQuiz(l, z)}
       onRestart={() => {
         if (!confirm(`Почати тест ${l} заново? Поточний прогрес пропаде — сервер перевірить лабораторну ще раз і роздасть нові 50 питань.`)) return;
         setQuiz(l, z => ({...z, restarting: true, question: null, result: null, expired: false, error: null}));
         submitOne(l);
       }} />)}
+
+    {dev.open && <DevMenu dev={dev} setDev={setDev} answers={answers} unknown={unknown} setUnknown={setUnknown} quizzes={quizzes}
+      onClose={() => setDev(d => ({...d, open: false}))} />}
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
