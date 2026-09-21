@@ -134,14 +134,19 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 const Step = ({n, state, children}) => <div className={`step ${state || ""}`}><div className="num">{n}</div><div>{children}</div></div>;
 // ↑↑↓↓←→←→ B A Enter, typed anywhere outside a field, opens the answer table
 const KONAMI = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a", "Enter"];
-function useKonami(onHit) {
-  const pos = useRef(0);
+function useKonami(handlers) {
+  const pos = useRef(0), h = useRef(handlers);
+  h.current = handlers;
   useEffect(() => {
     const onKey = (e) => {
       if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const was = pos.current;
       pos.current = k === KONAMI[pos.current] ? pos.current + 1 : k === KONAMI[0] ? 1 : 0;
-      if (pos.current === KONAMI.length) { pos.current = 0; onHit(); }
+      if (pos.current > was && k.startsWith("Arrow")) e.preventDefault();
+      if (pos.current === KONAMI.length) { pos.current = 0; h.current.onHit(); }
+      else if (pos.current > was) h.current.onStep(pos.current, k);
+      else if (was > 1) h.current.onMiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -267,7 +272,22 @@ function App() {
       else if (d.question) setQuiz(z => ({...z, question: d.question}));
     }).catch(() => {});
   }, []);
-  useKonami(() => setSecret(true));
+  const page = useRef(null);
+  const nudge = (key, step) => {
+    const el = page.current;
+    if (!el || !el.animate) return;
+    const amp = 4 + step * 2;
+    const move = (x, y) => [{transform: "translate(0,0)"}, {transform: `translate(${x}px,${y}px)`, offset: .35}, {transform: "translate(0,0)"}];
+    const pulse = (k) => [{transform: "scale(1)"}, {transform: `scale(${k})`, offset: .4}, {transform: "scale(1)"}];
+    const frames = key === "ArrowUp" ? move(0, -amp) : key === "ArrowDown" ? move(0, amp)
+      : key === "ArrowLeft" ? move(-amp, 0) : key === "ArrowRight" ? move(amp, 0)
+      : key === "b" ? pulse(.982) : key === "a" ? pulse(1.018)
+      : key === "Enter" ? [{transform: "scale(1)", filter: "brightness(1)"}, {transform: "scale(1.03)", filter: "brightness(1.18)", offset: .3}, {transform: "scale(1)", filter: "brightness(1)"}]
+      : [{transform: "translateX(0)"}, {transform: "translateX(-6px)", offset: .2}, {transform: "translateX(6px)", offset: .5}, {transform: "translateX(-3px)", offset: .8}, {transform: "translateX(0)"}];
+    el.animate(frames, {duration: key === "Enter" ? 420 : 300, easing: "cubic-bezier(.2,.8,.2,1)"});
+  };
+  useKonami({onStep: (step, k) => step >= 2 && nudge(k, step), onMiss: () => nudge("miss", 0),
+             onHit: () => { nudge("Enter", 11); setSecret(true); }});
   useEffect(() => save(SKEY, secret), [secret]);
   const nameReq = useRef(0);
   const labs = labsOf(form.course);
@@ -335,7 +355,7 @@ function App() {
   };
   const cls = (c) => c.level === "bad" ? "bad" : c.level === "ok" ? "ok" : "";
 
-  return <div>
+  return <div ref={page}>
     <h1>Перевірка лабораторних</h1>
     <p className="sub">Той самий сервер перевірки, що на сайті викладача. Форма не скидається, лабораторні пачкою, відповіді пояснені.</p>
 
