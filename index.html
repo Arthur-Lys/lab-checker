@@ -58,7 +58,13 @@ details summary{cursor:pointer;color:#2563eb;font-size:13px}
 .tile:nth-child(2){animation-delay:.08s}.tile:nth-child(3){animation-delay:.16s}
 .tile .v{font-size:22px;font-weight:700}.tile .l{font-size:12px;color:#6b7280}
 .grade{text-align:center;margin:0 0 12px;font-size:15px}
-.secret{border-color:#a78bfa}.secret input{margin:2px 0 4px}.secret td:first-child{width:58%}.secret b{color:#4c1d95}
+.opt.right{border-color:#22c55e;background:#f0fdf4}.opt.right .key{background:#22c55e;color:#fff}
+.opt.right:disabled{opacity:1}
+.opt.picked.right,.opt.picked.good,.opt.picked.right:disabled,.opt.picked.good:disabled{border-color:#16a34a;background:#dcfce7}
+.opt.picked.right .key,.opt.picked.good .key{background:#16a34a;color:#fff}
+.opt.picked.wrong,.opt.picked.wrong:disabled{border-color:#dc2626;background:#fee2e2;animation:oops .3s cubic-bezier(.2,.8,.2,1)}
+.opt.picked.wrong .key{background:#dc2626;color:#fff}
+@keyframes oops{20%{transform:translateX(-5px)}50%{transform:translateX(5px)}80%{transform:translateX(-2px)}}
 </style>
 </head>
 <body>
@@ -153,27 +159,7 @@ function useKonami(handlers) {
   }, []);
 }
 
-// the Lab_01 quiz pool (answers.json), searchable by text: the server shuffles the letters on every draw
-function Answers({onHide}) {
-  const [data, setData] = useState(null);
-  const [q, setQ] = useState("");
-  const box = useRef(null);
-  useEffect(() => {
-    fetch("/answers.json").then(r => r.json()).then(setData).catch(() => setData({error: true}));
-    box.current && box.current.scrollIntoView({behavior: "smooth", block: "start"});
-  }, []);
-  const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
-  const all = (data && data.questions) || [];
-  const rows = q.trim() ? all.filter(r => norm(r.q + " " + r.a).includes(norm(q))) : all;
-  return <div className="results secret" ref={box}>
-    <h2><span>{data ? `${data.lab} · відповіді на тест` : "…"}<span className="preview"> · {all.length} питань</span></span>
-        <button className="ghost" onClick={onHide}>сховати</button></h2>
-    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="шукай за текстом питання" />
-    <p className="hint muted">{data && data.error ? "answers.json не завантажився" : `${rows.length} з ${all.length} · літери A–D перемішуються щоразу, шукай за текстом`}</p>
-    <table><tbody>{rows.map(r => <tr key={r.q}><td>{r.q}</td><td><b>{r.a}</b></td></tr>)}</tbody></table>
-  </div>;
-}
-const QKEY = "lab-checker-quiz";
+const QKEY = "lab-checker-quizzes";
 const quizPost = (body) => fetch("/api/quiz", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
 
 // eased count-up for the result numbers
@@ -189,12 +175,16 @@ function Count({to, max, ms = 900}) {
 }
 
 // the teacher's quiz, driven through api/quiz.py. One click sends the answer; there is no way back on his side.
-function Quiz({quiz, onChange, onRestart, running}) {
+// `answers` (question -> correct text) is only there while the code is on: it pre-lights the right option and
+// colours the click green / red; a question the key doesn't know gets green on faith.
+function Quiz({quiz, answers, onChange, onRestart, onHideAnswers}) {
   const [phase, setPhase] = useState("in");     // in | out
   const [picked, setPicked] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const q = quiz.question;
+  const known = answers && q ? answers[q.q] : null;
+  const rightKey = known && q ? (q.opts.find(o => o.t === known) || {}).k : null;
 
   async function answer(k) {
     if (busy || !q) return;
@@ -204,11 +194,14 @@ function Quiz({quiz, onChange, onRestart, running}) {
     catch (error) { d = {error: `Мережа: ${error.message}`}; }
     if (d.expired) { onChange({...quiz, expired: true}); setBusy(false); return; }
     if (d.error) { setErr(d.error); setPicked(null); setBusy(false); return; }
-    setPhase("out");
+    const hold = rightKey && k !== rightKey ? 700 : 0;   // let a red one register before it slides away
     setTimeout(() => {
-      onChange(d.done ? {...quiz, question: null, result: d.result} : {...quiz, question: d.question});
-      setPicked(null); setPhase("in"); setBusy(false);
-    }, 180);
+      setPhase("out");
+      setTimeout(() => {
+        onChange(d.done ? {...quiz, question: null, result: d.result} : {...quiz, question: d.question});
+        setPicked(null); setPhase("in"); setBusy(false);
+      }, 180);
+    }, hold);
   }
   useEffect(() => {   // keys 1–4 answer too
     const onKey = (e) => {
@@ -220,8 +213,21 @@ function Quiz({quiz, onChange, onRestart, running}) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const head = (extra) => <h2><span>Тест · {quiz.lab}{extra}</span>
-    <button className="ghost" disabled={busy || running} onClick={onRestart}>{running ? "перевіряю…" : "заново"}</button></h2>;
+  const optClass = (o) => {
+    const c = ["opt"];
+    if (answers && rightKey === o.k) c.push("right");
+    if (picked === o.k) { c.push("picked"); if (answers) c.push(rightKey ? (o.k === rightKey ? "right" : "wrong") : "good"); }
+    return c.join(" ");
+  };
+  const head = (extra) => <h2><span>Тест · {quiz.lab}{extra}{answers && <span className="preview"> · підказки</span>}</span>
+    <span>{answers && <button className="ghost" onClick={onHideAnswers}>сховати підказки</button>}{" "}
+      <button className="ghost" disabled={busy || quiz.restarting} onClick={onRestart}>заново</button></span></h2>;
+
+  if (quiz.restarting) return <div className="results quiz">{head(null)}
+    <p className="hint muted">перевіряю лабораторну ще раз і роздаю нові 50 питань…</p></div>;
+
+  if (quiz.error) return <div className="results quiz">{head(null)}
+    <p className="hint bad">{quiz.error}</p><p className="hint muted">«Заново» спробує ще раз.</p></div>;
 
   if (quiz.expired) return <div className="results quiz">{head(null)}
     <p className="hint bad">Сесія тесту на сервері закінчилась. «Заново» перевірить лабораторну ще раз і роздасть нові 50 питань.</p></div>;
@@ -245,8 +251,8 @@ function Quiz({quiz, onChange, onRestart, running}) {
     <div className="bar"><div className="fill" style={{width: `${((q.n - 1) / q.total) * 100}%`}} /></div>
     <div key={q.n} className={`qcard ${phase}`}>
       <p className="qtext">{q.q}</p>
-      <div className="opts">{q.opts.map((o, i) => <button key={o.k} className={`opt ${picked === o.k ? "picked" : ""}`} disabled={busy} onClick={() => answer(o.k)}>
-        <span className="key">{i + 1}</span><span>{o.t}</span></button>)}</div>
+      <div className="opts">{q.opts.map((o, i) => <button key={o.k} className={optClass(o)} disabled={busy} onClick={() => answer(o.k)}>
+        <span className="key">{answers && rightKey === o.k ? "✓" : i + 1}</span><span>{o.t}</span></button>)}</div>
     </div>
     {err && <p className="hint bad">{err}</p>}
     <p className="hint muted">клік або клавіші 1–4 · відповідь іде одразу, назад дороги нема</p>
@@ -261,17 +267,25 @@ function App() {
   const [running, setRunning] = useState(false);
   const [nameApi, setNameApi] = useState({state: "idle"});   // idle | checking | ok | bad | error
   const [secret, setSecret] = useState(!!load(SKEY));
-  const [quiz, setQuiz] = useState(load(QKEY));
-  useEffect(() => save(QKEY, quiz), [quiz]);
-  // a reload mid-quiz: the server's GET is idempotent, so pick the current question back up
+  const [quizzes, setQuizzes] = useState(load(QKEY) || {});          // one quiz per lab
+  const [answers, setAnswers] = useState(null);                        // question -> correct text, while the code is on
+  useEffect(() => save(QKEY, quizzes), [quizzes]);
+  const setQuiz = (lab, fn) => setQuizzes(m => ({...m, [lab]: typeof fn === "function" ? fn(m[lab] || {lab}) : fn}));
+  // a reload mid-quiz: the server's GET is idempotent, so pick every open quiz back up
   useEffect(() => {
-    if (!quiz || !quiz.session || quiz.result || quiz.expired) return;
-    quizPost({session: quiz.session}).then(d => {
-      if (d.expired) setQuiz(z => ({...z, expired: true}));
-      else if (d.done) setQuiz(z => ({...z, question: null, result: d.result}));
-      else if (d.question) setQuiz(z => ({...z, question: d.question}));
-    }).catch(() => {});
+    Object.values(load(QKEY) || {}).forEach(z => {
+      if (!z || !z.session || z.result || z.expired) return;
+      quizPost({session: z.session}).then(d => {
+        if (d.expired) setQuiz(z.lab, q => ({...q, expired: true, restarting: false}));
+        else if (d.done) setQuiz(z.lab, q => ({...q, question: null, result: d.result, restarting: false}));
+        else if (d.question) setQuiz(z.lab, q => ({...q, question: d.question, restarting: false}));
+      }).catch(() => {});
+    });
   }, []);
+  useEffect(() => {
+    if (!secret || answers) return;
+    fetch("/answers.json").then(r => r.json()).then(d => setAnswers(Object.fromEntries(d.questions.map(x => [x.q, x.a])))).catch(() => {});
+  }, [secret]);
   const page = useRef(null);
   const nudge = (key, step) => {
     const el = page.current;
@@ -287,7 +301,7 @@ function App() {
     el.animate(frames, {duration: key === "Enter" ? 420 : 300, easing: "cubic-bezier(.2,.8,.2,1)"});
   };
   useKonami({onStep: (step, k) => step >= 2 && nudge(k, step), onMiss: () => nudge("miss", 0),
-             onHit: () => { nudge("Enter", 11); setSecret(true); }});
+             onHit: () => { nudge("Enter", 11); setSecret(v => !v); }});
   useEffect(() => save(SKEY, secret), [secret]);
   const nameReq = useRef(0);
   const labs = labsOf(form.course);
@@ -340,7 +354,8 @@ function App() {
     try { data = await post({...payload, lab}); }
     catch (error) { data = {status: 0, seconds: "", text: `Error: ${error.message}`}; }
     setResults(r => ({rows: {...r.rows, [lab]: {state: "done", ...data}}, at: new Date().toISOString()}));
-    if (data.passed && data.session) setQuiz({lab, session: data.session, question: data.question, at: new Date().toISOString()});
+    if (data.passed && data.session) setQuiz(lab, {lab, session: data.session, question: data.question, at: new Date().toISOString()});
+    else setQuizzes(m => m[lab] && m[lab].restarting ? {...m, [lab]: {...m[lab], restarting: false, error: explain(data.text || "", data.status)}} : m);
   }
   async function submitAll() {
     setRunning(true);
@@ -407,9 +422,13 @@ function App() {
       </tbody></table>
     </div>}
 
-    {quiz && <Quiz quiz={quiz} running={running} onChange={setQuiz} onRestart={() => submitOne(quiz.lab)} />}
-
-    {secret && <Answers onHide={() => setSecret(false)} />}
+    {labs.filter(l => quizzes[l]).map(l => <Quiz key={l} quiz={quizzes[l]} answers={secret ? answers : null}
+      onChange={(z) => setQuiz(l, z)} onHideAnswers={() => setSecret(false)}
+      onRestart={() => {
+        if (!confirm(`Почати тест ${l} заново? Поточний прогрес пропаде — сервер перевірить лабораторну ще раз і роздасть нові 50 питань.`)) return;
+        setQuiz(l, z => ({...z, restarting: true, question: null, result: null, expired: false, error: null}));
+        submitOne(l);
+      }} />)}
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
